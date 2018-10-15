@@ -1,0 +1,1 @@
+("6.12" ("08d38b2553720821eed7214929c3004ba192d389" . "c274d4aeb6508020aaddc7257ceadc4a8c900134") (collects #"eopl" #"eopl.rkt") (collects #"errortrace" #"errortrace-key.rkt"))

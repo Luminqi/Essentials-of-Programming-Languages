@@ -1,0 +1,347 @@
+(module SIMPLE-MODULE
+(lib "eopl.ss" "eopl")
+(require "../cha1.rkt")
+;;;;;;;;;;;;;lang;;;;;;;;;;;;;;;;;;;;;;
+  (define the-lexical-spec
+    '((whitespace (whitespace) skip)
+      (comment ("%" (arbno (not #\newline))) skip)
+      (identifier
+       (letter (arbno (or letter digit "_" "-" "?")))
+       symbol)
+      (number (digit (arbno digit)) number)
+      (number ("-" digit (arbno digit)) number)
+      ))
+  
+  (define the-grammar
+    '((program (expression) a-program)
+      
+      (expression (number) const-exp)
+      
+      (expression
+        ("-" "(" expression "," expression ")")
+        diff-exp)
+            
+      (expression
+       ("zero?" "(" expression ")")
+       zero?-exp)
+      
+      (expression
+       ("if" expression "then" expression "else" expression)
+       if-exp)
+
+      (expression (identifier) var-exp)
+
+      (expression
+       ("let" (arbno identifier "=" expression) "in" expression)
+       let-exp)
+
+      (expression
+       ("proc" "(" (arbno identifier ":" type) ")" expression)
+       proc-exp)
+
+      (expression
+       ("(" expression (arbno expression) ")")
+       call-exp)
+
+      (expression
+       ("letrec" (arbno type identifier "(" (arbno identifier ":" type) ")" "=" expression) "in" expression)
+      letrec-exp)
+
+      (expression
+       ("set" identifier "=" expression)
+       assign-exp)
+
+      (expression
+       ("newpair" "(" expression "," expression ")")
+       pair-exp)
+      
+      (expression
+       ("unpair" identifier identifier "=" expression "in" expression)
+       unpair-exp)
+
+      (expression
+       ("list" "(" expression (arbno "," expression) ")")
+       list-exp)
+
+      (expression
+       ("cons" "(" expression "," expression ")")
+       cons-exp)
+
+      (expression
+       ("null?" "(" expression ")")
+       null?-exp)
+
+      (expression
+       ("emptylist_" type)
+       emptylist-exp)
+
+      (expression
+       ("car" "(" expression ")")
+       car-exp)
+      
+      (expression
+       ("cdr" "(" expression ")")
+       cdr-exp)
+      
+      (type
+       ("int")
+       int-type)
+
+      (type
+       ("bool")
+       bool-type)
+
+      (type
+       ("(" (separated-list type "*") "->" type ")")
+       proc-type)
+
+      (type
+       ("pairof" type "*" type)
+       pair-type)
+
+      (type
+       ("listof" type)
+       list-type)
+      ))
+  
+  ;;;;;;;;;;;;;;;; sllgen boilerplate ;;;;;;;;;;;;;;;;
+  (sllgen:make-define-datatypes the-lexical-spec the-grammar)
+  (define show-the-datatypes
+    (lambda () (sllgen:list-define-datatypes the-lexical-spec the-grammar)))
+  
+  (define scan&parse
+    (sllgen:make-string-parser the-lexical-spec the-grammar))
+  
+  (define just-scan
+    (sllgen:make-string-scanner the-lexical-spec the-grammar))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;; environment implementation;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;helper func;;;;;;;;;;;;;
+  (define identifier?
+    (lambda (s)
+      (and (symbol? s) (not (eq? s 'lambda)))))
+;;;;;;;;;;;;;;;;ttpe-environment(abstract-syntax representation);;;;;;;;;;;;;;;;;;;;
+  (define-datatype type-environment type-environment?
+    (empty-tenv)
+    (extend-tenv
+     (vars (list-of identifier?))
+     (types (list-of type?))
+     (env type-environment?)))
+  (define apply-tenv
+    (lambda (env search-var)
+      (cases type-environment env
+        (empty-tenv ()
+                    (eopl:error 'apply-tenv "Unbound variable ~s" search-var))
+        (extend-tenv (saved-vars saved-types saved-env)
+                     (let ((i (index search-var saved-vars)))
+                       (if (not (zero? i))
+                           (pick i saved-types)
+                           (apply-tenv saved-env search-var)))))))
+  ;;init-tenv : () -> tenv
+  (define init-tenv
+    (lambda ()
+      (extend-tenv
+       (list 'i) (list (int-type))
+       (extend-tenv
+        (list 'v) (list (int-type))
+        (extend-tenv
+         (list 'x) (list (int-type))
+         (empty-tenv))))))
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;checker;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  ;;check-all : Listof(Type) × Listof(Type) × Listof(Exp) -> Unspecified
+  (define check-all
+    (lambda (loty1 loty2 loexp)
+      (cond
+        ((eq? (length loty1) 1) (check-equal-type! (car loty1) (car loty2) (car loexp)))
+        (else
+         (begin
+           (check-equal-type! (car loty1) (car loty2) (car loexp))
+           (check-all (cdr loty1) (cdr loty2) (cdr loexp)))))))
+  ;;check-equal-type! : Type × Type × Exp -> Unspecified
+  (define check-equal-type!
+    (lambda (ty1 ty2 exp)
+      (when (not (equal? ty1 ty2))
+        (report-unequal-types ty1 ty2 exp))))
+  ;;report-unequal-types : Type × Type × Exp -> Unspecified
+  (define report-unequal-types
+    (lambda (ty1 ty2 exp)
+      (eopl:error 'check-equal-type!
+                  "Types didn’t match: ~s != ~a in~%~a"
+                  (type-to-external-form ty1)
+                  (type-to-external-form ty2)
+                  exp)))
+  ;;type-to-external-form : Type -> List
+  (define type-to-external-form
+    (lambda (ty)
+      (cases type ty
+        (int-type () 'int)
+        (bool-type () 'bool)
+        (proc-type (loarg-type result-type)
+          (up
+            (list
+              (insertSym '* (map type-to-external-form loarg-type))
+              '->
+              (type-to-external-form result-type))))
+        (pair-type (ty1 ty2)
+          (list 'pairof
+            (type-to-external-form ty1)
+            (type-to-external-form ty2)))
+        (list-type (ty1)
+          (list 'listof (type-to-external-form ty1))))))
+  ;;insertSym : Sym × List -> List
+  (define insertSym
+    (lambda (sym lst)
+      (cond
+        ((or (null? lst) (eq? (length lst) 1)) lst)
+        (else (cons (car lst) (cons sym (insertSym sym (cdr lst))))))))
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;type-of-program;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  ;;run : String -> Type
+  (define run
+    (lambda (string)
+      (type-of-program (scan&parse string))))
+  ;;type-of-program : Program -> Type
+  (define type-of-program
+    (lambda (pgm)
+      (cases program pgm
+        (a-program (exp1) (type-of exp1 (init-tenv))))))
+  ;;type-of : Exp × Tenv -> Type
+  (define type-of
+    (lambda (exp tenv)
+      (cases expression exp
+        (const-exp (num) (int-type))
+        (var-exp (var) (apply-tenv tenv var))
+        (diff-exp (exp1 exp2)
+          (let ((ty1 (type-of exp1 tenv))
+                (ty2 (type-of exp2 tenv)))
+            (check-equal-type! ty1 (int-type) exp1)
+            (check-equal-type! ty2 (int-type) exp2)
+            (int-type)))
+        (zero?-exp (exp1)
+          (let ((ty1 (type-of exp1 tenv)))
+            (check-equal-type! ty1 (int-type) exp1)
+            (bool-type)))
+        (if-exp (exp1 exp2 exp3)
+          (let ((ty1 (type-of exp1 tenv)))
+            (check-equal-type! ty1 (bool-type) exp1)
+            (let ((ty2 (type-of exp2 tenv))
+                  (ty3 (type-of exp3 tenv)))
+              (check-equal-type! ty2 ty3 exp)
+              ty2)))
+        (let-exp (lovar loexp body)
+          (let ((lotype (map (lambda (exp1) (type-of exp1 tenv)) loexp)))
+            (type-of body (extend-tenv lovar lotype tenv))))
+        (proc-exp (lovar lovar-type body)
+          (let ((result-type
+                  (type-of body
+                    (extend-tenv lovar lovar-type tenv))))
+            (proc-type lovar-type result-type)))
+        (call-exp (rator lorand)
+          (let ((rator-type (type-of rator tenv))
+                (lorand-type (map (lambda (exp1) (type-of exp1 tenv)) lorand)))
+            (cases type rator-type
+              (proc-type (loarg-type result-type)
+                (begin
+                  (check-all loarg-type lorand-type lorand)
+                  result-type))
+              (else
+                (report-rator-not-a-proc-type rator-type rator)))))
+        (letrec-exp (lop-result-type lop-name lob-vars lob-var-types lop-body letrec-body)
+          (let ((tenv-for-letrec-body
+                  (extend-tenv lop-name
+                    (conjugate2 (lambda (loarg-type result-type) (proc-type loarg-type result-type)) lob-var-types lop-result-type)
+                    tenv)))
+            (let ((lop-body-type
+                    (conjugate3
+                      (lambda (p-body lob-var lob-var-type)
+                        (type-of p-body
+                           (extend-tenv lob-var lob-var-type
+                             tenv-for-letrec-body)))
+                      lop-body lob-vars lob-var-types)))
+              (check-all lop-body-type lop-result-type lop-body)
+              (type-of letrec-body tenv-for-letrec-body))))
+        (assign-exp (var exp1)
+          (let ((ty1 (type-of exp1 tenv)))
+            (check-equal-type! ty1 (apply-tenv tenv var) exp)
+            ty1))
+        (pair-exp (exp1 exp2)
+          (let ((ty1 (type-of exp1 tenv))
+                (ty2 (type-of exp2 tenv)))
+            (pair-type ty1 ty2)))
+        (unpair-exp (var1 var2 p-exp body)
+          (let ((p-type (type-of p-exp tenv)))
+            (cases type p-type
+              (pair-type (ty1 ty2)
+                (type-of body
+                  (extend-tenv (list var1 var2) (list ty1 ty2) tenv)))
+              (else
+                (report-exp-not-a-pair-type p-type p-exp)))))
+        (list-exp (exp1 loexp)
+          (let type-of-rest ((ty1 (type-of exp1 tenv)) (loexp loexp))
+            (if (null? loexp)
+              (list-type ty1)
+              (begin
+                (check-equal-type! (type-of (car loexp) tenv) ty1 (car loexp))
+                (type-of-rest ty1 (cdr loexp))))))
+        (cons-exp (exp1 exp2)
+          (let ((ty1 (type-of exp1 tenv))
+                (ty2 (type-of exp2 tenv)))
+            (cases type ty2
+              (list-type (l-type)
+                (begin
+                  (check-equal-type! ty1 l-type exp1)
+                  (list-type l-type)))
+              (else
+                (report-exp-not-a-list-type ty2 exp2)))))
+        (null?-exp (exp1)
+          (let ((ty1 (type-of exp1 tenv)))
+            (cases type ty1
+              (list-type (l-type)
+                (bool-type))
+              (else
+                (report-exp-not-a-list-type ty1 exp1)))))
+        (emptylist-exp (ty1)
+          (list-type ty1))
+        (car-exp (exp1)
+          (let ((ty1 (type-of exp1 tenv)))
+            (cases type ty1
+              (list-type (l-type)
+                l-type)
+              (else
+                (report-exp-not-a-list-type ty1 exp1)))))
+        (cdr-exp (exp1)
+          (let ((ty1 (type-of exp1 tenv)))
+            (cases type ty1
+              (list-type (l-type)
+                ty1)
+              (else
+                (report-exp-not-a-list-type ty1 exp1))))))))
+  ;;report-exp-not-a-list-type : type × exp -> undefined
+  (define report-exp-not-a-list-type
+    (lambda (type exp)
+      (eopl:error 'report-exp-not-a-list-type "exp ~s has type: ~s~% which should be list-type" exp (type-to-external-form type))))  
+  ;;report-exp-not-a-pair-type : type × exp -> undefined
+  (define report-exp-not-a-pair-type
+    (lambda (type exp)
+      (eopl:error 'report-exp-not-a-pair-type "exp ~s has type: ~s~% which should be pair-type" exp (type-to-external-form type))))
+  ;;report-rator-not-a-proc-type : type × exp -> undefined
+  (define report-rator-not-a-proc-type
+    (lambda (type exp)
+      (eopl:error 'report-rator-not-a-proc-type "rator ~s has type: ~s~% which should be proc-type" exp (type-to-external-form type))))
+  ;;conjugate2 : Proc × List × List -> List
+  (define conjugate2
+    (lambda (proc lst1 lst2)
+      (cond
+        ((and (null? lst1) (null? lst2)) '())
+        (else
+         (cons (proc (car lst1) (car lst2)) (conjugate2 proc (cdr lst1) (cdr lst2)))))))
+   ;;conjugate3 : Proc × List × List × List-> List
+  (define conjugate3
+    (lambda (proc lst1 lst2 lst3)
+      (cond
+        ((and (null? lst1) (null? lst2) (null? lst3)) '())
+        (else
+         (cons (proc (car lst1) (car lst2) (car lst3)) (conjugate3 proc (cdr lst1) (cdr lst2) (cdr lst3)))))))
+)
+
+
+

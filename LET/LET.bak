@@ -1,0 +1,115 @@
+#lang eopl
+(define report-no-binding-found
+  (lambda (search-var)
+    (eopl:error 'apply-env "No binding for ~s" search-var)))
+(define report-invalid-env
+  (lambda (env)
+    (eopl:error 'apply-env "Bad environment: ~s" env)))
+(define empty-env
+  (lambda ()
+    '()))
+(define extend-env
+  (lambda (var val env)
+    (list (list var val) env)))
+(define apply-env
+  (lambda (env search-var)
+    (cond
+      ((null? env)
+       (report-no-binding-found search-var))
+      (else
+       (let ((saved-var (caar env))
+             (saved-val (cadar env))
+             (saved-env (cadr env)))
+         (cond
+           ((eq? search-var saved-var) saved-val)
+           (else (apply-env saved-env search-var))))))))
+(define empty-env?
+  (lambda (env)
+    (null? env)))
+(define has-binding?
+  (lambda (env s)
+    (cond
+      ((null? env) #f)
+      (else
+       (let ((saved-var (caar env))
+             (saved-val (cadar env))
+             (saved-env (cadr env)))
+         (cond
+           ((eq? s saved-var) #t)
+           (else (has-binding? saved-env s))))))))
+
+(define-datatype program program?
+  (a-program
+    (exp1 expression?)))
+(define identifier?
+  (lambda (s)
+    (and (symbol? s) (not (eq? s 'lambda)))))
+(define-datatype expression expression?
+  (const-exp
+    (num number?))
+  (diff-exp
+    (exp1 expression?)
+    (exp2 expression?))
+  (zero?-exp
+    (exp1 expression?))
+  (if-exp
+    (exp1 expression?)
+    (exp2 expression?)
+    (exp3 expression?))
+  (var-exp
+    (var identifier?))
+  (let-exp
+    (var identifier?)
+    (exp1 expression?)
+    (body expression?)))
+
+(define-datatype expval expval?
+  (num-val
+    (num number?))
+  (bool-val
+    (bool boolean?)))
+;;expval->num : ExpVal -> Int
+(define expval->num
+  (lambda (val)
+    (cases expval val
+      (num-val (num) num)
+      (else (report-expval-extractor-error 'num val)))))
+;;expval->bool : ExpVal -> Bool
+(define expval->bool
+  (lambda (val)
+    (cases expval val
+      (bool-val (bool) bool)
+      (else (report-expval-extractor-error 'bool val)))))
+(define report-expval-extractor-error
+  (lambda (type val)
+    (if (eq? type 'num)
+      (eopl:error 'expval->num "expect num, but reveived ~s" val)
+      (eopl:error 'expval->bool "expect bool, but reveived ~s" val))))
+
+;;init-env : () -> Env
+(define init-env
+  (lambda ()
+    (extend-env
+     'i (num-val 1)
+     (extend-env
+      'v (num-val 5)
+      (extend-env
+       'x (num-val 10)
+       (empty-env))))))
+;;run : String -> ExpVal
+(define run
+  (lambda (string)
+    (value-of-program (scan&parse string))))
+(define scan&parse
+  (lambda (string)
+    (cond
+      ((number? string) (a-program (const-exp string)))
+      ((identifier? string) (a-program (var-exp string)))
+      ((eq? (car string))))))
+
+;;value-of-program : Program -> ExpVal
+(define value-of-program
+  (lambda (pgm)
+    (cases program pgm
+      (a-program (exp1)
+        (value-of exp1 (init-env))))))

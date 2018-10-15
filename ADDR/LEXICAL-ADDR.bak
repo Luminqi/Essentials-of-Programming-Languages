@@ -1,0 +1,5 @@
+(module LEXICAL-ADDR
+  (lib "eopl.ss" "eopl")
+  (require "../cha1.rkt")
+  (provide run)
+  )

@@ -1,0 +1,37 @@
+#lang racket
+;;find-max-crossing-subarray : List × Num × Num × Num -> List(Num Num Num)
+(define find-max-crossing-subarray
+  (lambda (lst low mid high)
+    (let ((left-result (find-max-left-subarray lst low mid))
+          (right-result (find-max-right-subarray lst (+ mid 1) high)))
+      (let ((left-low (car left-result))
+            (left-sum (caddr left-result))
+            (right-high (cadr right-result))
+            (right-sum (caddr right-result)))
+        (list left-low right-high (+ left-sum right-sum))))))
+(define find-max-left-subarray
+  (lambda (lst low mid)
+    ()))
+;;find-max-subarray : List × Num × Num -> List(Num Num Num)
+(define find-max-subarray
+  (lambda (lst low high)
+    (cond
+      ((equal? low high) (list low high (list-ref lst low)))
+      (else
+       (let ((mid (exact-floor (/ (+ low high) 2))))
+         (let ((left-result (find-max-subarray lst low mid))
+               (right-result (find-max-subarray lst (+ mid 1) high))
+               (cross-result (find-max-crossing-subarray lst low mid high)))
+           (let ((left-low (car left-result))
+                 (left-high (cadr left-result))
+                 (left-sum (caddr left-result))
+                 (right-low (car right-result))
+                 (right-high (cadr right-result))
+                 (right-sum (caddr right-result))
+                 (cross-low (car cross-result))
+                 (cross-high (cadr cross-result))
+                 (cross-sum (caddr cross-result)))
+             (cond
+               ((and (>= left-sum right-sum) (>= left-sum cross-sum)) (list left-low left-high left-sum))
+               ((and (>= right-sum left-sum) (>= right-sum cross-sum)) (list right-low right-high right-sum))
+               (else (list cross-low cross-high cross-sum))))))))))
